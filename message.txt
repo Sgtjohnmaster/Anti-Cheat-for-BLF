@@ -1,0 +1,146 @@
+class ServerProtection {
+    constructor() {
+        this.requestQueue = [];
+        this.maxRequestsPerSecond = 10;
+        this.requestHistory = new Map();
+        this.isServerHealthy = true;
+    }
+
+    // Rate limiting and request management
+    async handleRequest(request) {
+        if (!this.isServerHealthy) {
+            return this.handleServerRecovery();
+        }
+
+        if (this.isRateLimited()) {
+            return {
+                status: 'throttled',
+                message: 'Too many requests, please wait'
+            };
+        }
+
+        return await this.processRequest(request);
+    }
+
+    // Server health monitoring
+    monitorServerHealth() {
+        const metrics = {
+            cpu: this.getCPUUsage(),
+            memory: this.getMemoryUsage(),
+            responseTime: this.getAverageResponseTime()
+        };
+
+        if (this.isUnderStress(metrics)) {
+            this.enableProtectionMode();
+        }
+    }
+
+    // Safe request handler
+    async processRequest(request) {
+        try {
+            const response = await fetch("https://server.blayzegames.com/OnlineAccountSystem/open_case.php", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "*/*"
+                },
+                body: new URLSearchParams(request.data),
+                mode: "cors",
+                credentials: "omit"
+            });
+
+            this.updateRequestHistory(response);
+            return await response.json();
+
+        } catch (error) {
+            this.handleError(error);
+            return {
+                status: 'error',
+                message: 'Request failed, automatic retry scheduled'
+            };
+        }
+    }
+
+    // Rate limiting implementation
+    isRateLimited() {
+        const now = Date.now();
+        const recentRequests = [...this.requestHistory.values()]
+            .filter(timestamp => now - timestamp < 1000);
+        
+        return recentRequests.length >= this.maxRequestsPerSecond;
+    }
+
+    // Load balancing
+    balanceLoad() {
+        if (this.requestQueue.length > 100) {
+            this.requestQueue = this.requestQueue
+                .filter(request => Date.now() - request.timestamp < 30000);
+        }
+    }
+
+    // Error recovery
+    async handleServerRecovery() {
+        if (!this.isServerHealthy) {
+            await this.waitForServerRecovery();
+            this.isServerHealthy = true;
+        }
+    }
+
+    // Automatic retry mechanism
+    async retryFailedRequests() {
+        const failedRequests = this.requestQueue
+            .filter(request => request.retryCount < 3);
+
+        for (const request of failedRequests) {
+            await this.handleRequest(request);
+            await this.sleep(100); // Prevent server overload
+        }
+    }
+
+    // Server stress detection
+    isUnderStress(metrics) {
+        return metrics.cpu > 80 || 
+               metrics.memory > 90 || 
+               metrics.responseTime > 2000;
+    }
+
+    // Usage example
+    async safeRequest(data) {
+        return await this.handleRequest({
+            data,
+            timestamp: Date.now(),
+            retryCount: 0
+        });
+    }
+}
+
+// Implementation
+const serverProtection = new ServerProtection();
+
+// Safe request function
+async function safeSendRequest() {
+    const requestData = {
+        username: "username",
+        // other necessary data
+    };
+
+    const result = await serverProtection.safeRequest(requestData);
+    
+    if (result.status === 'throttled') {
+        console.log('Request throttled, waiting...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+}
+
+// Safe interval implementation
+setInterval(() => {
+    if (serverProtection.isServerHealthy) {
+        safeSendRequest();
+    }
+}, 1000); // Reasonable delay between requests
+
+// Server health monitoring
+setInterval(() => {
+    serverProtection.monitorServerHealth();
+    serverProtection.balanceLoad();
+}, 5000);
